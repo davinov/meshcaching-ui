@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MeshCaching</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   :root { --bg:#111418; --card:#1c2128; --txt:#e8ecf1; --dim:#8b95a1; --lvl:#3a4350; }
   * { box-sizing:border-box; }
@@ -32,14 +34,9 @@
   #pingMsg { min-height:1.3em; }
   .opts { display:flex; gap:20px; justify-content:center; margin-top:10px; color:var(--dim); }
   .opts label { display:flex; align-items:center; gap:6px; }
-  .tabs { display:flex; gap:8px; margin-top:18px; }
-  .tabs button { margin-top:0; padding:10px; font-size:1rem; background:var(--card); color:var(--dim); }
-  .tabs button.on { background:#2e86de; color:#fff; }
-  .view { position:relative; margin-top:8px; }
-  #plan, #map { display:block; width:100%; height:320px; margin:0; border-radius:12px; background:var(--card); }
-  #locate { position:absolute; right:10px; bottom:26px; z-index:1000; width:44px; height:44px; margin:0; padding:10px;
-            border-radius:50%; background:var(--card); color:var(--txt); box-shadow:0 1px 4px #0008; }
-  #locate svg { display:block; width:24px; height:24px; }
+  #map { width:100%; height:360px; margin-top:18px; border-radius:12px; background:var(--card); }
+  .leaflet-bar a.locate { display:flex; align-items:center; justify-content:center; }
+  .leaflet-bar a.locate svg { width:18px; height:18px; }
   [hidden] { display:none !important; }
   #geoMsg { text-align:center; color:var(--dim); font-size:.85rem; min-height:1.2em; margin-top:6px; }
   #clear { padding:10px; font-size:.95rem; background:var(--card); color:var(--dim); }
@@ -82,16 +79,7 @@
     <label><input type="checkbox" id="awake" checked> Écran allumé</label>
   </div>
 
-  <div class="tabs"><button id="tabPlan">Plan</button><button id="tabMap">Carte</button></div>
-  <div class="view">
-    <canvas id="plan"></canvas>
-    <div id="map" hidden></div>
-    <button id="locate" title="Ma position précise" aria-label="Ma position précise">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-        <circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/>
-        <path d="M12 1v4M12 19v4M1 12h4M19 12h4"/></svg>
-    </button>
-  </div>
+  <div id="map"></div>
   <div id="geoMsg"></div>
   <button id="clear">Effacer l’historique et les positions</button>
 
@@ -108,12 +96,12 @@ const STORE = 'meshcaching';
 let saved = {};
 try { saved = JSON.parse(localStorage.getItem(STORE)) || {}; } catch (e) {}
 let lastSeq = saved.lastSeq ?? -1, prevRssi = saved.prevRssi ?? null, hist = saved.hist || [], audio = null;
-let points = saved.points || [], target = saved.target || null, view = saved.view || 'plan';
+let points = saved.points || [], target = saved.target || null, base = saved.base || 'Plan';
 let here = null, lmap = null, llayer = null;
 
 function save() {
   try {
-    localStorage.setItem(STORE, JSON.stringify({ lastSeq, prevRssi, hist, points, target, view }));
+    localStorage.setItem(STORE, JSON.stringify({ lastSeq, prevRssi, hist, points, target, base }));
   } catch (e) {}
 }
 
@@ -375,14 +363,6 @@ function onPos(p, fit) {
 }
 function onGeoErr(e) { $('geoMsg').textContent = 'GPS indisponible : ' + e.message; }
 
-// Position fraiche (pas de cache) a la demande, puis recentrage de la vue
-$('locate').addEventListener('click', () => {
-  if (!navigator.geolocation) return;
-  $('geoMsg').textContent = 'Recherche de la position précise…';
-  navigator.geolocation.getCurrentPosition(p => onPos(p, true), onGeoErr,
-                                           { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
-});
-
 // On note ou l'on etait a chaque paquet du repeteur, si le paquet et la
 // position sont recents (sinon le point serait faux).
 function recordPoint(s) {
@@ -397,93 +377,52 @@ function strongest() {
   return points.reduce((best, p) => (!best || p.r > best.r ? p : best), null);
 }
 
-// --- Vue "Plan" : dessin hors ligne, centre sur nous, nord en haut ---
-function drawPlan() {
-  const c = $('plan'), dpr = window.devicePixelRatio || 1;
-  c.width = c.clientWidth * dpr; c.height = c.clientHeight * dpr;
-  const x = c.getContext('2d'), W = c.width, H = c.height;
-  x.font = (12 * dpr) + 'px sans-serif'; x.fillStyle = '#8b95a1';
-  const ref = here || points[points.length - 1];
-  if (!ref) { x.fillText('Aucune position pour l’instant', 12 * dpr, 24 * dpr); return; }
+// --- Carte : Leaflet, fond plan (OpenStreetMap) ou satellite (Esri) ---
+// Sans reseau Leaflet ne se charge pas : la liaison avec le boitier marche quand meme.
+function initMap() {
+  if (!window.L) { $('geoMsg').textContent = 'Carte indisponible (pas de réseau)'; return; }
+  lmap = L.map('map');
+  const bases = {
+    Plan: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                      { maxZoom: 19, attribution: '© OpenStreetMap' }),
+    Satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                           { maxZoom: 19, attribution: '© Esri' }),
+  };
+  (bases[base] || bases.Plan).addTo(lmap);
+  L.control.layers(bases, null, { position: 'topright' }).addTo(lmap);
+  lmap.on('baselayerchange', e => { base = e.name; save(); });
+  llayer = L.layerGroup().addTo(lmap);
 
-  // Metres est/nord autour de la reference : approximation plane, largement
-  // suffisante a l'echelle d'une chasse (quelques km).
-  const k = Math.cos(ref.lat * Math.PI / 180);
-  const en = p => [(p.lon - ref.lon) * 111320 * k, (p.lat - ref.lat) * 110540];
-  let span = 50;  // metres du centre au bord, au minimum
-  for (const p of points) {
-    const [e, n] = en(p);
-    span = Math.max(span, Math.abs(e) * 1.15, Math.abs(n) * 1.15);
-  }
-  const scale = Math.min(W, H) / 2 / span;  // pixels par metre
-  const xy = p => { const [e, n] = en(p); return [W / 2 + e * scale, H / 2 - n * scale]; };
-
-  // Echelle : longueur "ronde" (1, 2, 5 x 10^n m) d'environ un quart de largeur
-  const maxM = W / 4 / scale, pow = 10 ** Math.floor(Math.log10(maxM));
-  const bar = [1, 2, 5, 10].map(m => m * pow).filter(m => m <= maxM).pop();
-  x.strokeStyle = '#8b95a1'; x.lineWidth = 2 * dpr;
-  x.beginPath(); x.moveTo(12 * dpr, H - 12 * dpr); x.lineTo(12 * dpr + bar * scale, H - 12 * dpr); x.stroke();
-  x.fillText(bar >= 1000 ? bar / 1000 + ' km' : bar + ' m', 12 * dpr, H - 18 * dpr);
-  x.fillText('N ↑', W - 34 * dpr, 20 * dpr);
-
-  const best = strongest();
-  for (const p of points) {
-    const [X, Y] = xy(p);
-    x.fillStyle = level(p.r)[1];
-    x.beginPath(); x.arc(X, Y, 5 * dpr, 0, 7); x.fill();
-  }
-  if (best) {  // meilleur signal entoure : le repeteur est probablement de ce cote
-    const [X, Y] = xy(best);
-    x.strokeStyle = '#fff'; x.lineWidth = 2 * dpr;
-    x.beginPath(); x.arc(X, Y, 9 * dpr, 0, 7); x.stroke();
-  }
-  if (here) {
-    const [X, Y] = xy(here);
-    x.strokeStyle = '#4aa3ff'; x.lineWidth = dpr;
-    x.beginPath(); x.arc(X, Y, Math.max(6 * dpr, here.acc * scale), 0, 7); x.stroke();
-    x.fillStyle = '#4aa3ff';
-    x.beginPath(); x.arc(X, Y, 5 * dpr, 0, 7); x.fill();
-  }
-}
-
-// --- Vue "Carte" : Leaflet + OpenStreetMap, charges seulement si besoin ---
-function loadLeaflet() {
-  if (window.L) return Promise.resolve();
-  return new Promise((ok, ko) => {
-    const css = document.createElement('link');
-    css.rel = 'stylesheet';
-    css.href = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css';
-    document.head.appendChild(css);
-    const js = document.createElement('script');
-    js.src = 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js';
-    js.onload = ok; js.onerror = ko;
-    setTimeout(ko, 8000);  // sans reseau, la requete peut rester pendue
-    document.head.appendChild(js);
+  // Bouton "ma position" dans le style des boutons +/- : position fraiche
+  // (pas de cache) a la demande, puis recentrage
+  const Locate = L.Control.extend({
+    onAdd() {
+      const bar = L.DomUtil.create('div', 'leaflet-bar');
+      const a = L.DomUtil.create('a', 'locate', bar);
+      a.href = '#'; a.title = 'Ma position précise'; a.setAttribute('role', 'button');
+      a.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">'
+        + '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/>'
+        + '<path d="M12 1v4M12 19v4M1 12h4M19 12h4"/></svg>';
+      L.DomEvent.disableClickPropagation(bar);
+      L.DomEvent.on(a, 'click', e => { L.DomEvent.preventDefault(e); locate(); });
+      return bar;
+    },
   });
+  new Locate({ position: 'bottomright' }).addTo(lmap);
+  drawMap(true);
 }
 
-async function showMap() {
-  try {
-    await loadLeaflet();
-  } catch (e) {
-    $('geoMsg').textContent = 'Carte indisponible (pas de réseau) : retour au plan.';
-    setView('plan');
-    return;
-  }
-  if (!lmap) {
-    lmap = L.map('map');
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(lmap);
-    llayer = L.layerGroup().addTo(lmap);
-  }
-  lmap.invalidateSize();
-  drawLeaflet(true);
+function locate() {
+  if (!navigator.geolocation) return;
+  $('geoMsg').textContent = 'Recherche de la position précise…';
+  navigator.geolocation.getCurrentPosition(p => onPos(p, true), onGeoErr,
+                                           { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
 }
 
 // Les points ne sont reconstruits que s'ils ont change (sinon une bulle
 // ouverte se refermerait a chaque mise a jour GPS) ; notre position bouge seule.
 let lastDrawn = null, hereDot = null, hereRing = null;
-function drawLeaflet(fit) {
+function drawMap(fit) {
   if (!lmap) return;
   const last = points[points.length - 1] || null;
   if (last !== lastDrawn || fit) {
@@ -513,29 +452,13 @@ function drawLeaflet(fit) {
   }
 }
 
-function drawMap(fit) {
-  if (view === 'plan') drawPlan(); else drawLeaflet(fit);
-}
-
-function setView(v) {
-  view = v;
-  save();
-  $('tabPlan').className = v === 'plan' ? 'on' : '';
-  $('tabMap').className = v === 'map' ? 'on' : '';
-  $('plan').hidden = v !== 'plan';
-  $('map').hidden = v !== 'map';
-  if (v === 'map') showMap(); else drawPlan();
-}
-
-$('tabPlan').addEventListener('click', () => setView('plan'));
-$('tabMap').addEventListener('click', () => setView('map'));
 $('clear').addEventListener('click', () => {
   if (!confirm('Effacer l’historique RSSI et les positions enregistrées ?')) return;
   hist = []; points = []; prevRssi = null;
   save(); drawChart(); drawMap(true);
 });
 
-setView(view);
+initMap();
 startGeo();
 // Ecran allume pendant la chasse : le navigateur relache le verrou des que
 // la page est cachee, on le reprend quand elle revient au premier plan.
@@ -552,7 +475,7 @@ keepAwake();
 
 tick();
 setInterval(tick, 1000);
-window.addEventListener('resize', () => { drawChart(); drawMap(false); });
+window.addEventListener('resize', drawChart);
 </script>
 </body>
 </html>
