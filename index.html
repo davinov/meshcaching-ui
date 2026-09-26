@@ -232,8 +232,19 @@ async function connectBle(pick) {
   linked(dev.name);
 }
 
+// Sur Android, le Web Serial natif de Chrome ne voit pas le port USB de
+// l'ESP32-S3 : on passe par le polyfill de Google, qui parle au port en WebUSB.
+// Sur ordinateur, le pilote du systeme tient le port : Web Serial natif.
+// Charge des l'ouverture : Chrome n'ouvre le choix du port que juste apres le toucher.
+const ANDROID = /Android/i.test(navigator.userAgent) && 'usb' in navigator;
+const serialApi = ANDROID ? import('https://cdn.jsdelivr.net/npm/web-serial-polyfill@1.0.15/dist/serial.js').then(m => m.serial)
+                          : Promise.resolve(navigator.serial);
+serialApi.catch(() => {});  // sans reseau : l'erreur s'affichera au clic
 async function connectSerial(pick) {
-  if (pick) { port = await navigator.serial.requestPort(); kind = 'serial'; }
+  if (pick) {
+    port = await (await serialApi).requestPort();
+    kind = 'serial';
+  }
   setConn('connexion…');
   dec = new TextDecoder();
   await port.open({ baudRate: 115200 });
@@ -257,8 +268,8 @@ function connect(fn, pick) {
   fn(pick).catch(e => { if (e.name !== 'NotFoundError') lost(e); else if (!send) setConn('déconnecté', true); });
 }
 if ('bluetooth' in navigator) $('bBle').hidden = false;
-if ('serial' in navigator) $('bSer').hidden = false;
-if (!('bluetooth' in navigator || 'serial' in navigator))
+if ('serial' in navigator || ANDROID) $('bSer').hidden = false;
+if ($('bBle').hidden && $('bSer').hidden)
   $('linkMsg').textContent = 'Ce navigateur ne sait parler ni Bluetooth ni USB : utilisez Chrome (Android ou ordinateur) ou Edge.';
 $('bBle').addEventListener('click', () => connect(connectBle, true));
 $('bSer').addEventListener('click', () => connect(connectSerial, true));
