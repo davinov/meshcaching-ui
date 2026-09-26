@@ -47,7 +47,22 @@
   .leaflet-bar a.locate svg { width:18px; height:18px; }
   [hidden] { display:none !important; }
   #geoMsg { text-align:center; color:var(--dim); font-size:.85rem; min-height:1.2em; margin-top:6px; }
-  #clear { padding:10px; font-size:.95rem; background:var(--card); color:var(--dim); }
+  #clear, #manage { padding:10px; font-size:.95rem; background:var(--card); color:var(--dim); }
+  dialog { width:100%; max-width:480px; height:100%; max-height:100%; margin:0 auto; padding:12px 16px;
+           border:0; background:var(--bg); color:var(--txt); }
+  dialog::backdrop { background:#000a; }
+  dialog h2 { font-size:1.1rem; margin:0; }
+  #ptsClose { width:auto; margin:0; padding:6px 12px; font-size:1rem; background:var(--card); }
+  .row { display:flex; gap:8px; }
+  .row button { padding:10px; font-size:1rem; }
+  #ptsMsg { color:var(--dim); font-size:.85rem; min-height:1.2em; margin-top:8px; }
+  #ptsList { list-style:none; padding:0; margin:8px 0 0; }
+  #ptsList li { display:flex; align-items:center; gap:10px; background:var(--card); border-radius:10px;
+                padding:8px 10px; margin-bottom:6px; font-size:.85rem; }
+  #ptsList i { width:14px; height:14px; border-radius:50%; flex:none; }
+  #ptsList div { flex:1; min-width:0; }
+  #ptsList small { display:block; color:var(--dim); }
+  #ptsList li button { width:auto; margin:0; padding:6px 10px; font-size:.85rem; background:#3a4350; }
   #link .msg, #pingMsg { text-align:center; color:var(--dim); font-size:.9rem; margin-top:6px; }
   #log { margin:10px 0 0; font-size:.7rem; color:var(--dim); white-space:pre-wrap; word-break:break-all; }
   footer { margin-top:14px; font-size:.75rem; color:var(--dim); text-align:center; }
@@ -89,7 +104,16 @@
 
   <div id="map"></div>
   <div id="geoMsg"></div>
+  <button id="manage">Gérer les points enregistrés</button>
   <button id="clear">Effacer l’historique et les positions</button>
+
+  <dialog id="pts">
+    <header><h2>Points enregistrés <span id="ptsN"></span></h2><button id="ptsClose" aria-label="Fermer">✕</button></header>
+    <div class="row"><button id="exp">Exporter</button><button id="imp">Importer</button></div>
+    <input type="file" id="impFile" accept=".json,application/json" hidden>
+    <div id="ptsMsg"></div>
+    <ol id="ptsList"></ol>
+  </dialog>
 
   <footer><span id="why"></span> · <span id="rx">0</span> paquets entendus au total<pre id="log"></pre></footer>
 </main>
@@ -402,6 +426,7 @@ function recordPoint(s) {
                 acc: Math.round(here.acc), r: s.rssi, snr: s.snr });
   if (points.length > MAX_POINTS) points.shift();
   drawMap(false);
+  if ($('pts').open) renderPoints();
 }
 
 function strongest() {
@@ -492,6 +517,69 @@ function drawMap(fit) {
     else lmap.setView([48.8566, 2.3522], 11);  // Paris par defaut
   }
 }
+
+// --- Gestion des points : liste, suppression, export / import JSON ---
+const fmtWhen = t => new Date(t).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'medium' });
+
+function renderPoints() {
+  $('ptsN').textContent = '(' + points.length + ')';
+  const col = colorer(points.map(p => p.r));
+  $('ptsList').replaceChildren(...points.slice().reverse().map(p => {  // les plus recents en haut
+    const li = document.createElement('li');
+    // Que des nombres (verifies a l'import) et une date formatee : pas d'injection possible
+    li.innerHTML = '<i style="background:' + col(p.r) + '"></i><div><b>' + Math.round(p.r) + ' dBm</b> · SNR '
+      + p.snr.toFixed(1) + ' · ±' + p.acc + ' m<small>' + fmtWhen(p.t) + ' · '
+      + p.lat.toFixed(5) + ', ' + p.lon.toFixed(5) + '</small></div><button>Supprimer</button>';
+    li.querySelector('button').addEventListener('click', () => {
+      if (!confirm('Supprimer le point du ' + fmtWhen(p.t) + ' (' + Math.round(p.r) + ' dBm) ?')) return;
+      points = points.filter(q => q !== p);
+      pointsChanged(false);
+    });
+    return li;
+  }));
+}
+
+function pointsChanged(fit) {
+  save(); renderPoints();
+  lastDrawn = null; drawMap(fit);  // force le redessin meme si le dernier point n'a pas change
+}
+
+$('manage').addEventListener('click', () => { $('ptsMsg').textContent = ''; renderPoints(); $('pts').showModal(); });
+$('ptsClose').addEventListener('click', () => $('pts').close());
+
+$('exp').addEventListener('click', () => {
+  const data = { app: 'meshcaching', target, exported: new Date().toISOString(), points };
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }));
+  a.download = 'meshcaching-' + (target || 'points') + '-' + new Date().toISOString().slice(0, 10) + '.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+});
+
+$('imp').addEventListener('click', () => $('impFile').click());
+$('impFile').addEventListener('change', async e => {
+  const f = e.target.files[0];
+  e.target.value = '';  // pour pouvoir reimporter le meme fichier
+  if (!f) return;
+  let d;
+  try { d = JSON.parse(await f.text()); } catch (err) { $('ptsMsg').textContent = 'Fichier illisible (JSON attendu)'; return; }
+  const list = Array.isArray(d) ? d : d && d.points;
+  // Fichier venu d'ailleurs : on ne garde que des points aux champs numeriques valides
+  const num = v => typeof v === 'number' && isFinite(v);
+  const clean = (Array.isArray(list) ? list : [])
+    .filter(p => p && num(p.t) && num(p.lat) && num(p.lon) && num(p.r) && Math.abs(p.lat) <= 90 && Math.abs(p.lon) <= 180)
+    .map(p => ({ t: p.t, lat: p.lat, lon: p.lon, acc: num(p.acc) ? Math.round(p.acc) : 0, r: p.r, snr: num(p.snr) ? p.snr : 0 }));
+  if (!clean.length) { $('ptsMsg').textContent = 'Aucun point valide dans ce fichier'; return; }
+  if (d.target && target && d.target !== target
+      && !confirm('Ces points viennent du répéteur ' + d.target + ', la cible actuelle est ' + target + '. Importer quand même ?')) return;
+  // Fusion sans doublons (meme heure et meme lieu), dans l'ordre chronologique
+  const key = p => p.t + ',' + p.lat + ',' + p.lon, seen = new Set(points.map(key));
+  const added = clean.filter(p => !seen.has(key(p)) && seen.add(key(p)));
+  points = [...points, ...added].sort((a, b) => a.t - b.t).slice(-MAX_POINTS);
+  pointsChanged(true);
+  $('ptsMsg').textContent = added.length + ' point(s) importé(s)' + (clean.length > added.length ? ', ' + (clean.length - added.length) + ' déjà présent(s)' : '')
+    + (list.length > clean.length ? ', ' + (list.length - clean.length) + ' invalide(s) ignoré(s)' : '');
+});
 
 $('clear').addEventListener('click', () => {
   if (!confirm('Effacer l’historique RSSI et les positions enregistrées ?')) return;
