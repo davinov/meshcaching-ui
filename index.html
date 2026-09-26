@@ -394,7 +394,7 @@ function initMap() {
   llayer = L.layerGroup().addTo(lmap);
 
   // Bouton "ma position" dans le style des boutons +/- : position fraiche
-  // (pas de cache) a la demande, puis recentrage
+  // (pas de cache) a la demande, puis carte centree dessus
   const Locate = L.Control.extend({
     onAdd() {
       const bar = L.DomUtil.create('div', 'leaflet-bar');
@@ -415,7 +415,10 @@ function initMap() {
 function locate() {
   if (!navigator.geolocation) return;
   $('geoMsg').textContent = 'Recherche de la position précise…';
-  navigator.geolocation.getCurrentPosition(p => onPos(p, true), onGeoErr,
+  navigator.geolocation.getCurrentPosition(p => {
+    onPos(p, false);
+    if (lmap) lmap.setView([here.lat, here.lon], Math.max(lmap.getZoom(), 17));
+  }, onGeoErr,
                                            { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
 }
 
