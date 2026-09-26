@@ -36,6 +36,10 @@
   .opts label { display:flex; align-items:center; gap:6px; }
   #map { width:100%; height:360px; margin-top:18px; border-radius:12px; background:var(--card); }
   .leaflet-bar a.locate { display:flex; align-items:center; justify-content:center; }
+  .legend { background:#1c2128dd; color:var(--txt); padding:4px 8px 3px; border-radius:6px; font-size:11px;
+            display:flex; flex-wrap:wrap; justify-content:space-between; width:130px; }
+  .legend i { flex-basis:100%; height:8px; border-radius:4px; margin-bottom:2px;
+              background:linear-gradient(to right, #6c3483, #2471a3, #b7950b, #e67e22, #c0392b); }
   .leaflet-bar a.locate svg { width:18px; height:18px; }
   [hidden] { display:none !important; }
   #geoMsg { text-align:center; color:var(--dim); font-size:.85rem; min-height:1.2em; margin-top:6px; }
@@ -114,6 +118,20 @@ function level(r) {
   return ['Glacial', '#6c3483'];
 }
 
+// Degrade relatif pour le graphique et la carte : du plus faible (froid) au
+// plus fort (chaud) des valeurs affichees, avec les couleurs des niveaux.
+const RAMP = ['#6c3483', '#2471a3', '#b7950b', '#e67e22', '#c0392b'];
+const RAMP_RGB = RAMP.map(h => [1, 3, 5].map(i => parseInt(h.substr(i, 2), 16)));
+function ramp(k) {
+  k = Math.min(1, Math.max(0, k)) * (RAMP.length - 1);
+  const i = Math.min(Math.floor(k), RAMP.length - 2), f = k - i;
+  return 'rgb(' + RAMP_RGB[i].map((c, j) => Math.round(c + (RAMP_RGB[i + 1][j] - c) * f)) + ')';
+}
+function colorer(rs) {
+  const lo = Math.min(...rs), hi = Math.max(...rs);
+  return r => ramp(hi > lo ? (r - lo) / (hi - lo) : 1);
+}
+
 function fmtAge(s) {
   if (s < 60) return s + ' s';
   if (s < 3600) return Math.floor(s / 60) + ' min ' + String(s % 60).padStart(2, '0');
@@ -166,8 +184,9 @@ function drawChart() {
   x.strokeStyle = '#8b95a1'; x.beginPath();
   hist.forEach((p, i) => i ? x.lineTo(xOf(p.t), yOf(p.r)) : x.moveTo(xOf(p.t), yOf(p.r)));
   x.stroke();
+  const col = colorer(rs);
   for (const p of hist) {
-    x.fillStyle = level(p.r)[1];
+    x.fillStyle = col(p.r);
     x.beginPath(); x.arc(xOf(p.t), yOf(p.r), 4 * dpr, 0, 7); x.fill();
   }
 }
@@ -418,6 +437,8 @@ function initMap() {
     },
   });
   new Locate({ position: 'bottomright' }).addTo(lmap);
+  const Legend = L.Control.extend({ onAdd: () => (legend = L.DomUtil.create('div', 'legend')) });
+  new Legend({ position: 'bottomleft' }).addTo(lmap);
   drawMap(true);
 }
 
@@ -433,17 +454,20 @@ function locate() {
 
 // Les points ne sont reconstruits que s'ils ont change (sinon une bulle
 // ouverte se refermerait a chaque mise a jour GPS) ; notre position bouge seule.
-let lastDrawn = null, hereDot = null, hereRing = null;
+let legend = null, lastDrawn = null, hereDot = null, hereRing = null;
 function drawMap(fit) {
   if (!lmap) return;
   const last = points[points.length - 1] || null;
   if (last !== lastDrawn || fit) {
     lastDrawn = last;
     llayer.clearLayers();
-    const best = strongest();
+    const best = strongest(), rs = points.map(p => p.r), col = colorer(rs);
+    legend.hidden = !points.length;
+    if (points.length)
+      legend.innerHTML = '<i></i><span>' + Math.round(Math.min(...rs)) + '</span><span>' + Math.round(Math.max(...rs)) + ' dBm</span>';
     for (const p of points) {
       L.circleMarker([p.lat, p.lon], { radius: 6, color: p === best ? '#fff' : '#000',
-                                       weight: p === best ? 3 : 1, fillColor: level(p.r)[1], fillOpacity: 0.9 })
+                                       weight: p === best ? 3 : 1, fillColor: col(p.r), fillOpacity: 0.9 })
         .bindPopup(Math.round(p.r) + ' dBm · SNR ' + p.snr.toFixed(1) + ' · ' + new Date(p.t).toLocaleTimeString())
         .addTo(llayer);
     }
