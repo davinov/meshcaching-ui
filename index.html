@@ -75,6 +75,7 @@
   <div class="opts">
     <label><input type="checkbox" id="vib" checked> Vibration</label>
     <label><input type="checkbox" id="beep"> Bip</label>
+    <label><input type="checkbox" id="awake" checked> Écran allumé</label>
   </div>
 
   <div class="tabs"><button id="tabPlan">Plan</button><button id="tabMap">Carte</button></div>
@@ -490,6 +491,19 @@ $('clear').addEventListener('click', () => {
 
 setView(view);
 startGeo();
+// Ecran allume pendant la chasse : le navigateur relache le verrou des que
+// la page est cachee, on le reprend quand elle revient au premier plan.
+let lock = null;
+async function keepAwake() {
+  if (!navigator.wakeLock || document.hidden) return;
+  if (!$('awake').checked) { if (lock) lock.release(); lock = null; return; }
+  if (!lock || lock.released) try { lock = await navigator.wakeLock.request('screen'); } catch (e) {}
+}
+if (!navigator.wakeLock) $('awake').parentElement.hidden = true;
+$('awake').addEventListener('change', keepAwake);
+document.addEventListener('visibilitychange', keepAwake);
+keepAwake();
+
 tick();
 setInterval(tick, 1000);
 window.addEventListener('resize', () => { drawChart(); drawMap(false); });
