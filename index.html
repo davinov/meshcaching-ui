@@ -450,8 +450,9 @@ function drawMap(fit) {
   }
   if (here) {
     if (!hereDot) {
-      hereRing = L.circle([here.lat, here.lon], { radius: here.acc, color: '#4aa3ff', weight: 1 }).addTo(lmap);
-      hereDot = L.circleMarker([here.lat, here.lon], { radius: 5, color: '#4aa3ff', fillOpacity: 1 }).addTo(lmap);
+      // Non cliquables : ils sont dessines par-dessus les points, qui doivent rester touchables
+      hereRing = L.circle([here.lat, here.lon], { radius: here.acc, color: '#4aa3ff', weight: 1, interactive: false }).addTo(lmap);
+      hereDot = L.circleMarker([here.lat, here.lon], { radius: 5, color: '#4aa3ff', fillOpacity: 1, interactive: false }).addTo(lmap);
     }
     hereRing.setLatLng([here.lat, here.lon]).setRadius(here.acc);
     hereDot.setLatLng([here.lat, here.lon]);
