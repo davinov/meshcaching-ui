@@ -78,7 +78,7 @@
     <label><input type="checkbox" id="awake" checked> Écran allumé</label>
   </div>
 
-  <div class="tabs"><button id="tabPlan">Plan</button><button id="tabMap">Carte</button></div>
+  <div class="tabs"><button id="tabPlan">Plan</button><button id="tabMap">Carte</button><button id="locate">Ma position</button></div>
   <canvas id="plan"></canvas>
   <div id="map" hidden></div>
   <div id="geoMsg"></div>
@@ -354,14 +354,23 @@ $('ping').addEventListener('click', () => {
 // --- Positions GPS ---
 function startGeo() {
   if (!navigator.geolocation) { $('geoMsg').textContent = 'GPS indisponible sur ce navigateur'; return; }
-  navigator.geolocation.watchPosition(p => {
-    here = { lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy, t: Date.now() };
-    $('geoMsg').textContent = 'Position à ±' + Math.round(here.acc) + ' m · ' + points.length + ' points';
-    drawMap(false);
-  }, e => {
-    $('geoMsg').textContent = 'GPS indisponible : ' + e.message;
-  }, { enableHighAccuracy: true, maximumAge: 5000 });
+  navigator.geolocation.watchPosition(p => onPos(p, false), onGeoErr, { enableHighAccuracy: true, maximumAge: 5000 });
 }
+
+function onPos(p, fit) {
+  here = { lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy, t: Date.now() };
+  $('geoMsg').textContent = 'Position à ±' + Math.round(here.acc) + ' m · ' + points.length + ' points';
+  drawMap(fit);
+}
+function onGeoErr(e) { $('geoMsg').textContent = 'GPS indisponible : ' + e.message; }
+
+// Position fraiche (pas de cache) a la demande, puis recentrage de la vue
+$('locate').addEventListener('click', () => {
+  if (!navigator.geolocation) return;
+  $('geoMsg').textContent = 'Recherche de la position précise…';
+  navigator.geolocation.getCurrentPosition(p => onPos(p, true), onGeoErr,
+                                           { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
+});
 
 // On note ou l'on etait a chaque paquet du repeteur, si le paquet et la
 // position sont recents (sinon le point serait faux).
