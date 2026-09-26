@@ -214,7 +214,9 @@ function lost(err) {
 
 async function connectBle(pick) {
   if (pick) {
-    dev = await navigator.bluetooth.requestDevice({ filters: [{ namePrefix: 'MeshCaching' }], optionalServices: [NUS] });
+    // Nom et service ne tiennent pas ensemble dans une annonce de 31 octets :
+    // on accepte l'un ou l'autre.
+    dev = await navigator.bluetooth.requestDevice({ filters: [{ namePrefix: 'MeshCaching' }, { services: [NUS] }], optionalServices: [NUS] });
     dev.addEventListener('gattserverdisconnected', () => lost());
     kind = 'ble';
   }
