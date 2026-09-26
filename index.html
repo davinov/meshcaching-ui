@@ -385,9 +385,9 @@ function initMap() {
   lmap = L.map('map');
   const bases = {
     Plan: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                      { maxZoom: 22, maxNativeZoom: 19, attribution: '© OpenStreetMap' }),
+                      { maxZoom: 25, maxNativeZoom: 19, attribution: '© OpenStreetMap' }),
     Satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-                           { maxZoom: 22, maxNativeZoom: 19, attribution: '© Esri' }),
+                           { maxZoom: 25, maxNativeZoom: 19, attribution: '© Esri' }),
   };
   (bases[base] || bases.Plan).addTo(lmap);
   L.control.layers(bases, null, { position: 'topright' }).addTo(lmap);
