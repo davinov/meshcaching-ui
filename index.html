@@ -378,15 +378,16 @@ function strongest() {
 }
 
 // --- Carte : Leaflet, fond plan (OpenStreetMap) ou satellite (Esri) ---
+// Au-dela du zoom 19 (le plus fin des deux fonds), Leaflet agrandit les tuiles.
 // Sans reseau Leaflet ne se charge pas : la liaison avec le boitier marche quand meme.
 function initMap() {
   if (!window.L) { $('geoMsg').textContent = 'Carte indisponible (pas de réseau)'; return; }
   lmap = L.map('map');
   const bases = {
     Plan: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                      { maxZoom: 19, attribution: '© OpenStreetMap' }),
+                      { maxZoom: 22, maxNativeZoom: 19, attribution: '© OpenStreetMap' }),
     Satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-                           { maxZoom: 19, attribution: '© Esri' }),
+                           { maxZoom: 22, maxNativeZoom: 19, attribution: '© Esri' }),
   };
   (bases[base] || bases.Plan).addTo(lmap);
   L.control.layers(bases, null, { position: 'topright' }).addTo(lmap);
