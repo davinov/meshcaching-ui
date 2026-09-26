@@ -240,6 +240,19 @@ const ANDROID = /Android/i.test(navigator.userAgent) && 'usb' in navigator;
 const serialApi = ANDROID ? import('https://cdn.jsdelivr.net/npm/web-serial-polyfill@1.0.15/dist/serial.js').then(m => m.serial)
                           : Promise.resolve(navigator.serial);
 serialApi.catch(() => {});  // sans reseau : l'erreur s'affichera au clic
+// Le polyfill plante sur les paquets USB vides que l'ESP32-S3 envoie ("chunk
+// is empty") : on lit nous-memes le point d'entree USB, en sautant ces paquets.
+// ponytail: device_/inEndpoint_ sont internes au polyfill, version figee 1.0.15.
+const usbReader = p => ({
+  async read() {
+    for (;;) {
+      const r = await p.device_.transferIn(p.inEndpoint_.endpointNumber, 1024);
+      if (r.status !== 'ok') throw new Error('USB ' + r.status);
+      if (r.data.byteLength) return { value: new Uint8Array(r.data.buffer, r.data.byteOffset, r.data.byteLength) };
+    }
+  },
+  releaseLock() {},
+});
 async function connectSerial(pick) {
   if (pick) {
     port = await (await serialApi).requestPort();
@@ -248,7 +261,7 @@ async function connectSerial(pick) {
   setConn('connexion…');
   dec = new TextDecoder();
   await port.open({ baudRate: 115200 });
-  const wr = port.writable.getWriter(), rd = port.readable.getReader();
+  const wr = port.writable.getWriter(), rd = port.device_ ? usbReader(port) : port.readable.getReader();
   send = s => { wr.write(enc.encode(s)).catch(() => {}); };
   linked('USB');
   let err;
