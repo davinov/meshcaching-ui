@@ -145,14 +145,22 @@ function drawChart() {
   const c = $('chart'), dpr = window.devicePixelRatio || 1;
   c.width = c.clientWidth * dpr; c.height = c.clientHeight * dpr;
   const x = c.getContext('2d'), W = c.width, H = c.height, now = Date.now();
-  const yOf = r => H - (Math.min(-40, Math.max(-130, r)) + 130) / 90 * H;
+  hist = hist.filter(p => now - p.t < HIST_MS);
+  // Echelle adaptee aux valeurs affichees (+/- 5 dB, arrondi a 10, 30 dB au moins)
+  const rs = hist.map(p => p.r);
+  let lo = -130, hi = -40;
+  if (rs.length) {
+    hi = Math.ceil((Math.max(...rs) + 5) / 10) * 10;
+    lo = Math.min(Math.floor((Math.min(...rs) - 5) / 10) * 10, hi - 30);
+  }
+  const yOf = r => H - (r - lo) / (hi - lo) * H;
   x.font = (10 * dpr) + 'px sans-serif';
   x.strokeStyle = '#2c333d'; x.fillStyle = '#8b95a1'; x.lineWidth = dpr;
-  for (const r of [-120, -100, -80, -60]) {
+  const step = hi - lo > 60 ? 20 : 10;
+  for (let r = Math.floor(lo / step) * step + step; r < hi; r += step) {
     x.beginPath(); x.moveTo(0, yOf(r)); x.lineTo(W, yOf(r)); x.stroke();
     x.fillText(r, 4 * dpr, yOf(r) - 3 * dpr);
   }
-  hist = hist.filter(p => now - p.t < HIST_MS);
   if (!hist.length) return;
   const xOf = t => W - (now - t) / HIST_MS * W;
   x.strokeStyle = '#8b95a1'; x.beginPath();
